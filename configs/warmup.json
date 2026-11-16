@@ -1,0 +1,13 @@
+{
+  "data_dir": "data/seq",
+  "run_dir": "runs/warmup",
+  "seed": 0,
+  "model": {"d_model": 128, "n_layers": 4, "n_heads": 4, "d_ff": 512, "dropout": 0.1, "board_dim": 32},
+  "epochs": 8,
+  "max_tokens_per_batch": 8192,
+  "lr": 0.001,
+  "weight_decay": 0.01,
+  "warmup_steps": 300,
+  "loss_weights": {"card": 1.0, "tile": 1.0, "delay": 0.5, "win": 0.5},
+  "threads": 4
+}
