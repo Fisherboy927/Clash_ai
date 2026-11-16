@@ -1,0 +1,9 @@
+# Raw data and trained weights must never be committed (dataset licensing is unclear)
+data/
+runs/
+*.pt
+*.tar.gz
+__pycache__/
+*.pyc
+.venv/
+results/smoke_cpu/
