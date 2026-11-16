@@ -100,4 +100,4 @@ log "evaluating"
 mkdir -p "$RESULTS/$RESULT_NAME"
 cp "results/$RESULT_NAME/metrics.json" "results/$RESULT_NAME/summary.md" "$RUN_DIR/train_log.json" \
   data/il_parsed/parse_report.json data/il_seq/split_summary.json "$RESULTS/$RESULT_NAME/"
-log "done: results in $RESULTS/$RESULT_NAME, checkpoint in $RUN_DIR/best.pt"
+log "done: results in $RESULTS/$RESULT_NAME, checkpoint in $REPO/$RUN_DIR/best.pt"
