@@ -1,6 +1,6 @@
 """Render results/<run>/metrics.json as a small markdown table.
 
-Usage: python -m clashai.summarize --metrics results/warmup/metrics.json
+Usage: python -m clashai.summarize --metrics results/warmup_gpu/metrics.json
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import argparse
 import json
 import os
 
-SPLITS = ["test_time", "test_player", "test_random"]
+SPLITS = ["test_shard", "test_random"]
 
 
 def pct(x):
@@ -22,7 +22,7 @@ def row(name, cells):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--metrics", default="results/warmup/metrics.json")
+    ap.add_argument("--metrics", default="results/warmup_gpu/metrics.json")
     args = ap.parse_args()
     with open(args.metrics) as f:
         m = json.load(f)
@@ -95,11 +95,11 @@ def main():
             cells.append(f"{c['auc']:.3f} / {c['brier']:.3f} / {c['ece']:.3f}")
         lines.append(row(name, cells))
     lines.append("")
-    lines.append("**Win-probability AUC by game phase (test_time)**")
+    lines.append("**Win-probability AUC by game phase (test_shard)**")
     lines.append("")
     lines.append("| phase | n | model AUC | model ECE | logistic AUC |")
     lines.append("|---|---|---|---|---|")
-    for ph, c in m["test_time"]["win_prob_by_phase"].items():
+    for ph, c in m["test_shard"]["win_prob_by_phase"].items():
         lines.append(f"| {ph} | {c['n']} | {c['model_auc']:.3f} | {c['model_ece']:.3f} | {c['logistic_auc']:.3f} |")
     lines.append("")
 

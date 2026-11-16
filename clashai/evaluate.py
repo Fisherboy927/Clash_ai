@@ -24,7 +24,7 @@ from sklearn.metrics import roc_auc_score
 from .dataset import KIND_PLAY, NO_TILE, SIDE_OPP, SIDE_OWN, UNK
 from .format import GRID_W
 from .model import DELAY_EDGES, PLAY_SOON_BINS, PlayHistoryTransformer, collate, delay_bin, length_batches
-from .train import load_split
+from .train import load_split, pick_device
 
 RECENT_TICKS = 100
 PHASES = ["0-1 min", "1-2 min", "2-3 min", "overtime"]
@@ -230,7 +230,7 @@ def subset_sequences(arrays, keep):
     idx = np.concatenate(idx)
     for k in token_fields:
         out[k] = arrays[k][idx]
-    for k in ("length", "deck", "win", "battle_index", "player_seen_in_train"):
+    for k in ("length", "deck", "win", "battle_index"):
         out[k] = arrays[k][seqs]
     out["offset"] = np.concatenate([[0], np.cumsum(out["length"])[:-1]]).astype(np.int64)
     return out
@@ -252,7 +252,7 @@ def hand_mask(ctx, arrays, ids, T, vocab_size):
     return m
 
 
-def model_predictions(model, arrays, ctx):
+def model_predictions(model, arrays, ctx, device):
     n_tok = len(arrays["card"])
     pred = {
         "card_top1_hand": np.zeros(n_tok, dtype=np.int64),
@@ -279,14 +279,18 @@ def model_predictions(model, arrays, ctx):
     with torch.no_grad():
         for ids in length_batches(arrays["length"], 16384):
             batch = collate(arrays, ids)
+            for k in batch:
+                batch[k] = batch[k].to(device)
             out = model(batch)
+            for k in out:
+                out[k] = out[k].float()
             logp = torch.log_softmax(out["card"], -1)
             top3 = logp.topk(3, -1).indices
             top1 = top3[..., 0]
             tgt = batch["t_card"].clamp(min=0)
             nll = -logp.gather(-1, tgt[..., None]).squeeze(-1)
             hit3 = (top3 == tgt[..., None]).any(-1)
-            hm = hand_mask(ctx, arrays, ids, logp.shape[1], logp.shape[2])
+            hm = hand_mask(ctx, arrays, ids, logp.shape[1], logp.shape[2]).to(device)
             top3_h = logp.masked_fill(~hm, -1e9).topk(3, -1).indices
             hit3_h = (top3_h == tgt[..., None]).any(-1)
             tile_t = model.tile_logits(out["h"], batch["t_card"]).argmax(-1)
@@ -296,6 +300,16 @@ def model_predictions(model, arrays, ctx):
             med_bin = (cdf < 0.5).sum(-1).clamp(max=len(DELAY_EDGES) - 1)
             p_soon = dprob[..., :PLAY_SOON_BINS].sum(-1)
             p_win = torch.sigmoid(out["win"])
+            top1 = top1.cpu()
+            top3_h = top3_h.cpu()
+            hit3_h = hit3_h.cpu()
+            hit3 = hit3.cpu()
+            nll = nll.cpu()
+            tile_t = tile_t.cpu()
+            tile_p = tile_p.cpu()
+            med_bin = med_bin.cpu()
+            p_soon = p_soon.cpu()
+            p_win = p_win.cpu()
             for b in range(len(ids)):
                 s = ids[b]
                 o = int(arrays["offset"][s])
@@ -369,17 +383,6 @@ def evaluate_split(name, arrays, ctx, base, pred):
         "model + hand mask": {"top1": float((pred["card_top1_hand"][pre] == tgt).mean()),
                               "top3": float(pred["card_top3_hit_hand"][pre].mean())},
     }
-    seq_of_tok = np.repeat(np.arange(len(arrays["length"])), arrays["length"])
-    seen = arrays["player_seen_in_train"][seq_of_tok[pre]] == 1
-    by_seen = {}
-    for label, m in (("player_seen_in_train", seen), ("player_not_in_train", ~seen)):
-        if m.sum() < 100:
-            continue
-        by_seen[label] = {"n": int(m.sum()),
-                          "model_top1": float((pred["card_top1"][pre][m] == tgt[m]).mean()),
-                          "model_hand_top1": float((pred["card_top1_hand"][pre][m] == tgt[m]).mean()),
-                          "cond_freq_top1": float(cond_top1[m].mean())}
-    res["card_top1_by_player_seen"] = by_seen
 
     true_tile = arrays["t_tile"][pre].astype(np.int64)
     rand_dist = np.zeros(len(pre))
@@ -480,13 +483,16 @@ def evaluate_split(name, arrays, ctx, base, pred):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", default="runs/warmup")
-    ap.add_argument("--data", default="data/seq")
-    ap.add_argument("--costs", default="data/hf/card_costs.json")
-    ap.add_argument("--out", default="results/warmup")
+    ap.add_argument("--run", default="runs/warmup_gpu")
+    ap.add_argument("--data", default="data/il_seq")
+    ap.add_argument("--costs", default="data/il_parsed/card_costs.json")
+    ap.add_argument("--out", default="results/warmup_gpu")
+    ap.add_argument("--device", default="auto")
+    ap.add_argument("--baseline-train-sequences", type=int, default=100_000,
+                    help="count baselines are fit on a random subset of train sequences")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
-    torch.set_num_threads(4)
+    device = pick_device(args.device)
     with open(os.path.join(args.data, "vocab.json")) as f:
         vocab = json.load(f)
     inv_vocab = {}
@@ -495,25 +501,30 @@ def main():
     with open(args.costs) as f:
         costs = json.load(f)
 
-    ckpt = torch.load(os.path.join(args.run, "best.pt"), weights_only=False)
+    ckpt = torch.load(os.path.join(args.run, "best.pt"), weights_only=False, map_location="cpu")
     model = PlayHistoryTransformer(ckpt["vocab_size"], **ckpt["config"]["model"])
     model.load_state_dict(ckpt["model"])
+    model.to(device)
 
     train = load_split(args.data, "train")
+    n_seq = len(train["length"])
+    if n_seq > args.baseline_train_sequences:
+        rng = np.random.default_rng(0)
+        keep = np.zeros(n_seq, dtype=bool)
+        keep[rng.choice(n_seq, size=args.baseline_train_sequences, replace=False)] = True
+        train = subset_sequences(train, keep)
     add_token_win(train)
     print("fitting baselines", flush=True)
     base = Baselines(train, context_features(train, costs, inv_vocab, with_legal=False))
     del train
 
-    all_res = {"checkpoint_epoch": ckpt["epoch"]}
-    for name in ("test_time", "test_player", "test_random"):
+    all_res = {"checkpoint_epoch": ckpt["epoch"], "device": str(device)}
+    for name in ("test_shard", "test_random"):
         arrays = load_split(args.data, name)
-        if name == "test_player":
-            arrays = subset_sequences(arrays, arrays["player_seen_in_train"] == 0)
         add_token_win(arrays)
         ctx = context_features(arrays, costs, inv_vocab)
         print("predicting", name, flush=True)
-        pred = model_predictions(model, arrays, ctx)
+        pred = model_predictions(model, arrays, ctx, device)
         all_res[name] = evaluate_split(name, arrays, ctx, base, pred)
         print(json.dumps(all_res[name], indent=1), flush=True)
     with open(os.path.join(args.out, "metrics.json"), "w") as f:

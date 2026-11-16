@@ -1,0 +1,16 @@
+{
+  "data_dir": "data/il_seq",
+  "run_dir": "runs/warmup_gpu",
+  "seed": 0,
+  "model": {"d_model": 384, "n_layers": 8, "n_heads": 6, "d_ff": 1536, "dropout": 0.1, "board_dim": 32},
+  "epochs": 15,
+  "max_hours": 2.0,
+  "max_tokens_per_batch": 32768,
+  "lr": 0.0006,
+  "weight_decay": 0.05,
+  "warmup_steps": 500,
+  "loss_weights": {"card": 1.0, "tile": 1.0, "delay": 0.5, "win": 0.5},
+  "amp": true,
+  "loader_workers": 6,
+  "log_every": 200
+}

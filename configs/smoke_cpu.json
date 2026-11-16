@@ -1,0 +1,29 @@
+{
+  "data_dir": "data/il_seq_smoke",
+  "run_dir": "runs/smoke_cpu",
+  "seed": 0,
+  "model": {
+    "d_model": 384,
+    "n_layers": 8,
+    "n_heads": 6,
+    "d_ff": 1536,
+    "dropout": 0.1,
+    "board_dim": 32
+  },
+  "epochs": 2,
+  "max_steps": 30,
+  "max_tokens_per_batch": 4096,
+  "lr": 0.0006,
+  "weight_decay": 0.05,
+  "warmup_steps": 5,
+  "loss_weights": {
+    "card": 1.0,
+    "tile": 1.0,
+    "delay": 0.5,
+    "win": 0.5
+  },
+  "amp": true,
+  "loader_workers": 2,
+  "threads": 3,
+  "log_every": 5
+}
